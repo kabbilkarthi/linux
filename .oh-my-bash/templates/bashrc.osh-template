@@ -5,14 +5,14 @@ case $- in
 esac
 
 # Path to your oh-my-bash installation.
-export OSH='/home/devops/.oh-my-bash'
+export OSH=~/.oh-my-bash
 
 # Set name of the theme to load. Optionally, if you set this to "random"
 # it'll load a random theme each time that oh-my-bash is loaded.
-OSH_THEME="agnoster"
+OSH_THEME="font"
 
 # If you set OSH_THEME to "random", you can ignore themes you don't like.
-OMB_THEME_RANDOM_IGNORED=("hawaii50" "edsonarios" "sirup" "powerline-multiline" "purity" "brainy" "cooperkid" "simple" "axin" "doubletime" "doubletime_multiline_pyonly" "powerbash10k" "tonka" "dos" "n0qorg" "nwinkler" "clean" "developer" "tonotdo")
+# OMB_THEME_RANDOM_IGNORED=("powerbash10k" "wanelo")
 
 # Uncomment the following line to use case-sensitive completion.
 # OMB_CASE_SENSITIVE="true"
@@ -66,7 +66,7 @@ OMB_THEME_RANDOM_IGNORED=("hawaii50" "edsonarios" "sirup" "powerline-multiline" 
 
 # Uncomment the following line if you do not want OMB to overwrite the existing
 # aliases by the default OMB aliases defined in lib/*.sh
-#OMB_DEFAULT_ALIASES="check"
+# OMB_DEFAULT_ALIASES="check"
 
 # Would you like to use another custom folder than $OSH/custom?
 # OSH_CUSTOM=/path/to/new-custom-folder
@@ -84,26 +84,26 @@ OMB_USE_SUDO=true
 # Example format: completions=(ssh git bundler gem pip pip3)
 # Add wisely, as too many completions slow down shell startup.
 completions=(
-#  git
-#  composer
-#  ssh
+  git
+  composer
+  ssh
 )
 
 # Which aliases would you like to load? (aliases can be found in ~/.oh-my-bash/aliases/*)
 # Custom aliases may be added to ~/.oh-my-bash/custom/aliases/
 # Example format: aliases=(vagrant composer git-avh)
 # Add wisely, as too many aliases slow down shell startup.
-#aliases=(
-#  general
-#)
+aliases=(
+  general
+)
 
 # Which plugins would you like to load? (plugins can be found in ~/.oh-my-bash/plugins/*)
 # Custom plugins may be added to ~/.oh-my-bash/custom/plugins/
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
 plugins=(
-#  git
-#  bashmarks
+  git
+  bashmarks
 )
 
 # Which plugins would you like to conditionally load? (plugins can be found in ~/.oh-my-bash/plugins/*)
