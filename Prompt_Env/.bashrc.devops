@@ -4,8 +4,6 @@ ERROR:
 SFTP : Received message too long 168435779 
 SCP : protocol error: unexpected <newline>
 '
-
-
 ## alias
 
 alias 'root=sudo -i'
