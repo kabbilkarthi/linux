@@ -1,1 +1,1 @@
-# Repository contains bash scripts with customization on prompts.
+## This repository contains various bash scripts and customization prompts
