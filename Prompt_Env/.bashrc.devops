@@ -21,11 +21,11 @@ source ~/.themes.sh
 : '
 ## Bash prompt OLD
 
-cyan="\033[1;96m"
-green="\033[1;92m"
-blue="\033[1;94m"
-white="\033[1;97m"
-end="\033[0m"
+cyan="\[\033[1;96m\]"
+green="\[\033[1;92m\]"
+blue="\[\033[1;94m\]"
+white="\[\033[1;97m\]"
+end="\[\033[0m\]"
 PS1="${green}\u${blue}@\h${white}:\w ${cyan}=>${white}${end} "
 unset green blue white cyan end
 '
