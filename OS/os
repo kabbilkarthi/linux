@@ -1,0 +1,370 @@
+#!/bin/bash
+
+# Author: KABBIL GI
+
+while getopts ":m:f:h" opt; do
+  case $opt in
+    m)
+      HOST="$OPTARG"
+      ;;
+    f)
+      FARM=$OPTARG
+      ;;
+    h)
+      echo "USAGE: $0 -m <HOSTNAME>"
+      echo "USAGE: $0 -f <FARM NAME>"
+      echo "USAGE: $0 -h [Help]"
+      exit 0
+      ;;
+    :)
+      echo "Missing argument for -$OPTARG"
+      exit 1
+      ;;
+    *)
+      echo "Invalid Option"
+      exit 1
+      ;;
+  esac
+done
+
+shift $(( OPTIND - 1 ))
+
+srcfrm () {
+    source /global/lsf/cells/$1/conf/profile.lsf
+}
+
+main_menu() {
+  clear
+  echo "-----------------------------------------------"
+  printf "| %-43s |\n" "Main MENU"
+  echo "-----------------------------------------------"
+  printf "| %-20s | %-20s |\n" "1. Disk" "2. Citrix"
+  printf "| %-20s | %-20s |\n" "3. Process" "4. Exit"
+  printf "| %-20s | %-20s |\n" "5. Farm" "6. Login Restriction"
+  printf "| %-20s | %-20s |\n" "7. Health Check"
+  echo "-----------------------------------------------"
+  echo
+  read -n 1 -p "Choose an option: " remote_opt
+  echo
+}
+
+if [ -z "$HOST" ] && [ -z "$FARM" ]; then
+  echo "USAGE: $0 -m <HOSTNAME>"
+  echo "USAGE: $0 -f <FARM NAME>"
+  echo "USAGE: $0 -h [Help]"
+  exit 1
+fi
+
+while [ -n "$HOST" ] || [ -n "$FARM" ]; do
+  main_menu
+  case $remote_opt in
+    1)
+      read -p "Disk path: " DISK
+      while [ -z "$DISK" ]; do
+        read -p "Please Enter Disk Path: " DISK
+      done
+      while [ -n "$DISK" ]; do
+        clear
+        echo "-----------------------------------"
+        printf "|         Disk MENU               |\n"
+        echo "-----------------------------------"
+        printf "| %-18s | %-7s |\n" "1. Main Menu" "2. FS Size"
+        echo "-----------------------------------"
+        printf "| %-18s | %-10s |\n" "3. Disk Usage Sort" "4. Exit"
+        echo "-----------------------------------"
+        read -n 1 -p "Choose an option: " diskopt
+        echo
+        case $diskopt in
+          1)
+            break
+          ;;
+          2)
+            DATE=$(date +%d-%m-%y)
+            {
+              ssh -t "$HOST" "
+              sudo -v; echo \"Filesystem Usage\"; sudo df -h $DISK
+              "
+            } 2>&1 | tee -a "${HOST}_${DATE}.log"
+          ;;
+          3)
+            DATE=$(date +%d-%m-%y)
+            {
+              ssh -t "$HOST" "
+              sudo -v; echo \"Disk Usage Summary\"; sudo du -shx $DISK
+              echo \"High Space Consumption\"; sudo du -hxd1 $DISK | sort -rh | head
+              "
+            } 2>&1 | tee -a "${HOST}_${DATE}.log"
+          ;;
+          4)
+            exit 0
+          ;;
+          *) echo "Invalid Option"
+          ;;
+        esac
+        printf "\n%30s\n" "Hit Any Key To Continue"
+        read -n 1
+      done
+      continue
+      ;;
+    2)
+      while true; do
+        clear
+        echo "----------------------------------"
+        printf "|           ctx MENU             |\n"
+        echo "----------------------------------"
+        printf "| %-13s | %-9s |\n" "1. Main Menu" "2. ctxqsession"
+        echo "----------------------------------"
+        printf "| %-13s | %-14s |\n" "3. ctxreset" "4. Exit"
+        echo "----------------------------------"
+        printf "| %-13s | %-14s |\n" "5. Reboot"
+        echo "----------------------------------"
+        read -n 1 -p "Choose an option: " citrixopt
+        echo
+        case $citrixopt in
+          1)
+            break
+          ;;
+          2)
+            DATE=$(date +%d-%m-%y)
+            {
+              sudo ssh -t "$HOST" "
+              echo \"Any User Session\"; ctxqsession
+              "
+            } 2>&1 | tee -a "${HOST}_${DATE}.log"
+          ;;
+          3)
+            DATE=$(date +%d-%m-%y)
+            {
+              sudo ssh -t "$HOST" "
+              echo \"Applying Reset\"; read -p \"session id: \" id; ctxreset :\$id
+              "
+            } 2>&1 | tee -a "${HOST}_${DATE}.log"
+          ;;
+          4)
+            exit 0
+          ;;
+          5)
+            DATE=$(date +%d-%m-%y)
+            {
+              sudo ssh -t "$HOST" "
+              echo \"Applying Reboot\"
+              shutdown -r now
+              "
+            } 2>&1 | tee -a "${HOST}_${DATE}.log"
+          ;;
+          *) echo "Invalid Option"
+          ;;
+        esac
+        printf "\n%30s\n" "Hit Any Key To Continue"
+        read -n 1
+      done
+      continue
+      ;;
+    3)
+      while true; do
+        clear
+        echo "----------------------------------------"
+        printf "|        Process MENU                  |\n"
+        echo "----------------------------------------"
+        printf "| %-18s | %-9s |\n" "1. Main Menu" "2. Uptime/Cores"
+        echo "----------------------------------------"
+        printf "| %-15s | %-15s |\n" "3. D-State Process" "4. Exit"
+        echo "----------------------------------------"
+        read -n 1 -p "Choose an option: " procopt
+        echo
+        case $procopt in
+          1)
+            break
+          ;;
+          2)
+            DATE=$(date +%d-%m-%y)
+            {
+              sudo ssh -t "$HOST" "
+              echo \"----- Uptime -----\"
+              uptime
+              echo \"----- CPU Cores -----\"
+              nproc
+              "
+            } 2>&1 | tee -a "${HOST}_${DATE}.log"
+          ;;
+          3)
+            DATE=$(date +%d-%m-%y)
+          {
+            sudo ssh -t "$HOST" "
+            ps -eo user,pid,s | grep -wi d >/dev/null 2>&1 
+            if [ \$? -eq 0 ]; then
+              ps -eo user,pid,s | grep -wi d 
+            else
+              echo \"No D-State process\"
+            fi
+            "
+          } 2>&1 | tee -a "${HOST}_${DATE}.log"
+        ;;
+        4)
+          exit 0
+        ;;
+        *) echo "Invalid Option"
+          ;;
+        esac
+        printf "\n%30s\n" "Hit Any Key To Continue"
+        read -n 1
+      done
+      continue
+      ;;
+    4)
+      exit 0
+    ;;
+    5)
+      if [ -z "$FARM" ]; then
+      echo
+      read -p "Enter FARM name: " FARM
+      while [ -z "$FARM" ]; do
+        read -p "FARM cannot be empty. Enter FARM name: " FARM
+      done
+      fi
+      while [ -n "$FARM" ]
+      do
+        clear
+        echo "---------------------------------------"
+        printf "|         Farm MENU                   |\n"
+        echo "---------------------------------------"
+        printf "| %-15s | %-9s |\n" "1. Main Menu" "2. Pending reason"
+        echo "---------------------------------------"
+        printf "| %-15s | %-17s |\n" "3. User Limit" "4. Exit"
+        echo "---------------------------------------"
+        echo
+        read -n 1 -p "Choose an option: " farmopt
+        echo
+
+        case $farmopt in 
+          1) break ;;
+          2)
+            DATE=$(date +%d-%m-%y)
+            {
+              echo "sourcing the farm \"$FARM\""
+              srcfrm "$FARM"
+              read -p "what is the userid: " user
+              echo -e "\nRunning Jobs"
+              bjobs -u "$user"
+              read -p "want to check the pending reason yes/no?: " ans
+              while [ -z "$ans" ]
+              do
+                read -p "Please confirm yes/no: " ans
+              done
+              if [ "$ans" == "yes" ] ||  [ "$ans" == "y" ] || [ "$ans" == "Y" ] 
+              then
+                read -p  "what is the jobid: " jobid
+                bjobs -l "$jobid"
+              fi
+            } 2>&1 |tee -a ${FARM}_${DATE}.log
+            ;;
+          3)
+            DATE=$(date +%d-%m-%y)
+            {
+              echo "sourcing the farm $FARM"
+              srcfrm "$FARM"
+              read -p "what is the userid: " user
+              echo -e "\nUser Limits: "
+              blimits -u "$user"
+            } 2>&1 |tee -a ${FARM}_${DATE}.log
+            ;;
+          4) exit 0 ;;
+          *) echo "Invalid Option"
+          ;;
+        esac
+        printf "\n%30s\n" "Hit Any Key To Continue"
+        read -n 1
+      done
+      continue
+      ;;
+    6)
+      while true; do
+        clear
+        echo "------------------------------------------"
+        printf "|  Login Restriction MENU                |\n"
+        echo "------------------------------------------"
+        printf "| %-15s | %-9s |\n" "1. Main Menu" "2. Show Restrictions"
+        echo "------------------------------------------"
+        printf "| %-15s | %-20s |\n" "3. Search User" "4. Exit"
+        echo "------------------------------------------"
+        read -n 1 -p "Choose an option: " loginopt
+        echo
+
+        case $loginopt in
+          1) break ;;
+          2)
+            DATE=$(date +%d-%m-%y)
+            {
+              sudo ssh -t "$HOST" "
+              echo \"Checking Login Restrictions (/etc/security/access.conf)\" 
+              tail -n 4 /etc/security/access.conf
+              "
+            } 2>&1 | tee -a "${HOST}_${DATE}.log"
+            ;;
+          3)
+            DATE=$(date +%d-%m-%y)
+            {
+              sudo ssh -t "$HOST" "
+               read -p \"Enter username to search: \" search
+              echo \"Searching for \$search in access.conf\"
+              grep -wi \$search /etc/security/access.conf
+              "
+            } 2>&1 | tee -a "${HOST}_${DATE}.log"
+            ;;
+          4) exit 0 ;;
+          *) echo "Invalid Option"
+          ;;
+        esac
+        printf "\n%30s\n" "Hit Any Key To Continue"
+        read -n 1
+      done
+      continue
+      ;;
+    7)
+      while true; do
+      clear
+      echo "-----------------------------------------------"
+      printf "|          Health check MENU                  |\n"
+      echo "-----------------------------------------------"
+      printf "| %-20s | %-20s |\n" "1. Main Menu" "2. Health Check - LS"
+      echo "-----------------------------------------------"
+      printf "| %-20s | %-20s |\n" "3. Health Check - SS" "4. Exit"
+      echo "-----------------------------------------------"
+      read -n 1 -p "Choose an option: " healthopt
+      echo
+      case $healthopt in
+        1)
+          break ;;
+        2)
+          DATE=$(date +%d-%m-%y)
+          {
+            sudo ssh -t "$HOST" "
+            echo \"----Running Health Check on \"$HOST\"----\"
+            /etc/synopsys/local_health_check/bin/local_health_check.sh -v
+            "
+          } 2>&1 | tee -a "${HOST}_${DATE}.log"
+          ;;
+        3)
+          DATE=$(date +%d-%m-%y)
+          {
+            sudo ssh -t "$HOST" "
+            echo \"----Running Health Check on \"$HOST\"----\"
+            ckhealth.ksh -v 
+            "
+          } 2>&1 | tee -a "${HOST}_${DATE}.log"
+          ;;
+        4) exit 0 ;;
+        *) echo "Invalid Option"
+          ;;
+        esac
+        printf "\n%30s\n" "Hit Any Key To Continue"
+        read -n 1
+      done
+      continue
+      ;;
+    *) echo "Invalid Option"
+    ;;
+  esac
+  printf "\n%30s\n" "Hit Any Key To Continue"
+  read -n 1
+done
