@@ -2,369 +2,509 @@
 
 # Author: KABBIL GI
 
-while getopts ":m:f:h" opt; do
-  case $opt in
-    m)
-      HOST="$OPTARG"
+trap cleanup INT EXIT
+
+MAX_PARALLEL=3
+
+usage() {
+  echo ""
+  echo "USAGE: $0 [OPTIONS]"
+  echo ""
+  echo "  -m, --machine  <value>   Single host, comma-separated hosts, or path to a hostfile"
+  echo "                           Examples:"
+  echo "                             -m server01"
+  echo "                             -m server01,server02,server03"
+  echo "                             -m /path/to/hostfile.txt"
+  echo ""
+  echo "  -f, --farm     <value>   LSF farm name"
+  echo "                           Example: -f prod_farm"
+  echo ""
+  echo "  -h, --help               Show this help message"
+  echo ""
+}
+
+
+OPTIONS=$(getopt --options  m:f:h --longoptions  machine:,farm:,help --name "$0" -- "$@") \
+|| { echo "Argument parsing failed. Use -h for help."; exit 1; }
+
+eval set -- "$OPTIONS"
+
+RAW_HOST=""
+FARM=""
+
+while true; do
+  case "$1" in
+    -m | --machine)
+      RAW_HOST="$2"
+      shift 2
       ;;
-    f)
-      FARM=$OPTARG
+    -f | --farm)
+      FARM="$2"
+      shift 2
       ;;
-    h)
-      echo "USAGE: $0 -m <HOSTNAME>"
-      echo "USAGE: $0 -f <FARM NAME>"
-      echo "USAGE: $0 -h [Help]"
+    -h | --help)
+      usage
       exit 0
       ;;
-    :)
-      echo "Missing argument for -$OPTARG"
-      exit 1
+    --)
+      shift
+      break
       ;;
     *)
-      echo "Invalid Option"
+      echo "Unexpected option: $1"
+      usage
       exit 1
       ;;
   esac
 done
 
-shift $(( OPTIND - 1 ))
+if [ $# -gt 0 ]; then
+  echo "ERROR: Unexpected positional argument(s): $*"
+  usage
+  exit 1
+fi
 
-srcfrm () {
-    source /global/lsf/cells/$1/conf/profile.lsf
+declare -a HOSTS=()
+
+if [ -n "$RAW_HOST" ]; then
+  if [ -f "$RAW_HOST" ]; then
+    while IFS= read -r line; do
+      line=$(echo "$line" | xargs)
+      [[ -z "$line" || "$line" == \#* ]] && continue
+      HOSTS+=("$line")
+    done < "$RAW_HOST"
+  else
+    IFS=', ' read -ra HOSTS <<< "$RAW_HOST"
+  fi
+fi
+
+if [ "${#HOSTS[@]}" -eq 0 ] && [ -z "$FARM" ]; then
+  usage; exit 1
+fi
+
+acquire_slot() {
+  while true; do
+    local running
+    running=$(jobs -rp | wc -l)
+    if (( running < MAX_PARALLEL )); then
+      return 0
+    fi
+    wait -n 2>/dev/null || sleep 0.3
+  done
 }
 
+run_parallel() {
+  local remote_cmd="$1"
+  local DATE
+  DATE=$(date +%d-%m-%y)
+
+  for h in "${HOSTS[@]}"; do
+    acquire_slot
+    (
+      output=$(echo "===== $h =====";ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o LogLevel=ERROR \
+            "$h" "$remote_cmd" 2>&1)
+      local rc=$?
+      if [ $rc -ne 255 ]; then
+        echo "$output"
+        echo
+      else
+        echo "$output"
+        echo "[WARN] SSH exited with code $rc on $h"
+        echo
+      fi
+    )  2>&1 | tee -a "${h}_${DATE}.log" &
+  done
+  wait
+}
+
+run_sequential() {
+  local remote_cmd="$1"
+  local DATE
+  DATE=$(date +%d-%m-%y)
+
+  for h in "${HOSTS[@]}"; do
+
+    (
+      echo "===== $h =====" 
+      output=$(sudo ssh -t -o ConnectTimeout=10 -o StrictHostKeyChecking=no \
+          -o LogLevel=ERROR "$h" "$remote_cmd" 2>&1)
+        local rc=$?
+
+        if [ $rc -ne 255 ]; then
+          echo "$output"
+          echo
+        else
+          echo "$output"
+          echo "[WARN] SSH exited with code $rc on $h"
+        fi
+     ) 2>&1 | tee -a "${h}_${DATE}.log"
+  done
+}
+
+srcfrm() {
+  source /global/lsf/cells/"$1"/conf/profile.lsf
+}
+
+# ─────────────────────────────────────────────
+# MENUS
+# ─────────────────────────────────────────────
 main_menu() {
   clear
   echo "-----------------------------------------------"
   printf "| %-43s |\n" "Main MENU"
   echo "-----------------------------------------------"
-  printf "| %-20s | %-20s |\n" "1. Disk" "2. Citrix"
+  printf "| %-20s | %-20s |\n" "1. Disk"    "2. Citrix"
   printf "| %-20s | %-20s |\n" "3. Process" "4. Exit"
-  printf "| %-20s | %-20s |\n" "5. Farm" "6. Login Restriction"
-  printf "| %-20s | %-20s |\n" "7. Health Check"
+  printf "| %-20s | %-20s |\n" "5. Farm"    "6. Login Restriction"
+  printf "| %-20s | %-20s |\n" "7. Health Check" ""
   echo "-----------------------------------------------"
   echo
-  read -n 1 -p "Choose an option: " remote_opt
+  read -rn 1 -p "Choose an option: " remote_opt
   echo
 }
 
-if [ -z "$HOST" ] && [ -z "$FARM" ]; then
-  echo "USAGE: $0 -m <HOSTNAME>"
-  echo "USAGE: $0 -f <FARM NAME>"
-  echo "USAGE: $0 -h [Help]"
-  exit 1
-fi
+pause() {
+  printf "\n%30s\n" "Hit Any Key To Continue"
+  read -rn 1
+}
 
-while [ -n "$HOST" ] || [ -n "$FARM" ]; do
+require_hosts() {
+  if [ "${#HOSTS[@]}" -eq 0 ]; then
+    echo "ERROR: No host(s) specified. Use -m to pass hosts."
+    return 1
+  fi
+  return 0
+}
+
+cleanup() {
+    echo "Cleaning up..."
+    kill 0
+}
+
+# ─────────────────────────────────────────────
+# MAIN LOOP
+# ─────────────────────────────────────────────
+while true; do
   main_menu
   case $remote_opt in
+
+    # ── 1. DISK ────────────────────────────────
     1)
-      read -p "Disk path: " DISK
+      require_hosts || { pause; continue; }
+      read -rp "Disk path: " DISK
       while [ -z "$DISK" ]; do
-        read -p "Please Enter Disk Path: " DISK
+        read -rp "Please enter a disk path: " DISK
       done
-      while [ -n "$DISK" ]; do
+
+      while true; do
         clear
         echo "-----------------------------------"
         printf "|         Disk MENU               |\n"
         echo "-----------------------------------"
-        printf "| %-18s | %-7s |\n" "1. Main Menu" "2. FS Size"
-        echo "-----------------------------------"
+        printf "| %-18s | %-7s |\n" "1. Main Menu"       "2. FS Size"
         printf "| %-18s | %-10s |\n" "3. Disk Usage Sort" "4. Exit"
         echo "-----------------------------------"
-        read -n 1 -p "Choose an option: " diskopt
+        printf "  Hosts (%d): %s\n" "${#HOSTS[@]}" "${HOSTS[*]}"
         echo
+        read -rn 1 -p "Choose an option: " diskopt
+        echo
+
         case $diskopt in
-          1)
-            break
-          ;;
+          1) break ;;
           2)
-            DATE=$(date +%d-%m-%y)
-            {
-              ssh -t "$HOST" "
-              sudo -v; echo \"Filesystem Usage\"; sudo df -h $DISK
-              "
-            } 2>&1 | tee -a "${HOST}_${DATE}.log"
-          ;;
+            echo "Checking FS size on ${#HOSTS[@]} host(s)"
+            run_sequential "
+              echo \"=== Filesystem Usage ===\"
+              df -h $DISK
+            "
+            ;;
           3)
-            DATE=$(date +%d-%m-%y)
-            {
-              ssh -t "$HOST" "
-              sudo -v; echo \"Disk Usage Summary\"; sudo du -shx $DISK
-              echo \"High Space Consumption\"; sudo du -hxd1 $DISK | sort -rh | head
-              "
-            } 2>&1 | tee -a "${HOST}_${DATE}.log"
-          ;;
-          4)
-            exit 0
-          ;;
-          *) echo "Invalid Option"
-          ;;
+            echo "Running disk usage sort on ${#HOSTS[@]} host(s)"
+            run_sequential "
+              echo \"=== Disk Usage Summary ===\"
+              du -shx $DISK
+              echo \"=== High Space Consumption ===\"
+              du -hxd1 $DISK | sort -rh | head
+            "
+            ;;
+          4) exit 0 ;;
+          *) echo "Invalid Option" ;;
         esac
-        printf "\n%30s\n" "Hit Any Key To Continue"
-        read -n 1
+        pause
       done
       continue
       ;;
+
+    # ── 2. CITRIX ──────────────────────────────
     2)
+      require_hosts || { pause; continue; }
+
       while true; do
         clear
         echo "----------------------------------"
         printf "|           ctx MENU             |\n"
         echo "----------------------------------"
-        printf "| %-13s | %-9s |\n" "1. Main Menu" "2. ctxqsession"
+        printf "| %-13s | %-14s |\n" "1. Main Menu"  "2. ctxqsession"
+        printf "| %-13s | %-14s |\n" "3. ctxreset"   "4. Exit"
+        printf "| %-13s |\n"         "5. Reboot"
         echo "----------------------------------"
-        printf "| %-13s | %-14s |\n" "3. ctxreset" "4. Exit"
-        echo "----------------------------------"
-        printf "| %-13s | %-14s |\n" "5. Reboot"
-        echo "----------------------------------"
-        read -n 1 -p "Choose an option: " citrixopt
+        printf "  Hosts (%d): %s\n" "${#HOSTS[@]}" "${HOSTS[*]}"
         echo
+        read -rn 1 -p "Choose an option: " citrixopt
+        echo
+
         case $citrixopt in
-          1)
-            break
-          ;;
+          1) break ;;
+
           2)
-            DATE=$(date +%d-%m-%y)
-            {
-              sudo ssh -t "$HOST" "
-              echo \"Any User Session\"; ctxqsession
-              "
-            } 2>&1 | tee -a "${HOST}_${DATE}.log"
-          ;;
+            echo "[Sequential] Querying ctxqsession on ${#HOSTS[@]} host(s)"
+            run_sequential "
+              echo \"=== User Sessions ===\"
+              ctxqsession
+            "
+            ;;
+
+          # ── ctxreset: SEQUENTIAL (interactive per-host) ──
           3)
+            echo "[Sequential] ctxreset runs one host at a time to avoid session ID collisions."
             DATE=$(date +%d-%m-%y)
-            {
-              sudo ssh -t "$HOST" "
-              echo \"Applying Reset\"; read -p \"session id: \" id; ctxreset :\$id
-              "
-            } 2>&1 | tee -a "${HOST}_${DATE}.log"
-          ;;
-          4)
-            exit 0
-          ;;
+            for h in "${HOSTS[@]}"; do
+              echo
+              echo "===== $h ====="
+              read -rp "  Session ID to reset on $h: " SESSION_ID
+              while [ -z "$SESSION_ID" ]; do
+                read -rp "  Session ID cannot be empty: " SESSION_ID
+              done
+              {
+                ssh -t "$h" "
+                  echo \"=== Applying ctxreset on session $SESSION_ID ===\"
+                  ctxreset :$SESSION_ID
+                "
+              } 2>&1 | tee -a "${h}_${DATE}.log"
+            done
+            ;;
+
+          4) exit 0 ;;
+
           5)
-            DATE=$(date +%d-%m-%y)
-            {
-              sudo ssh -t "$HOST" "
-              echo \"Applying Reboot\"
-              shutdown -r now
+            echo "[Sequential] Rebooting ${#HOSTS[@]} host(s)"
+            read -rp "Are you sure you want to reboot ${#HOSTS[@]} host(s)? [yes/no]: " confirm
+            if [[ "$confirm" == "yes" || "$confirm" == "y" || "$confirm" == "Y" ]]; then
+              run_sequential "
+                echo \"=== Applying Reboot ===\"
+                sudo shutdown -r now
               "
-            } 2>&1 | tee -a "${HOST}_${DATE}.log"
-          ;;
-          *) echo "Invalid Option"
-          ;;
+            else
+              echo "Reboot cancelled."
+            fi
+            ;;
+
+          *) echo "Invalid Option" ;;
         esac
-        printf "\n%30s\n" "Hit Any Key To Continue"
-        read -n 1
+        pause
       done
       continue
       ;;
+
+    # ── 3. PROCESS ─────────────────────────────
     3)
+      require_hosts || { pause; continue; }
+
       while true; do
         clear
         echo "----------------------------------------"
         printf "|        Process MENU                  |\n"
         echo "----------------------------------------"
-        printf "| %-18s | %-9s |\n" "1. Main Menu" "2. Uptime/Cores"
-        echo "----------------------------------------"
+        printf "| %-18s | %-9s |\n" "1. Main Menu"       "2. Uptime/Cores"
         printf "| %-15s | %-15s |\n" "3. D-State Process" "4. Exit"
         echo "----------------------------------------"
-        read -n 1 -p "Choose an option: " procopt
+        printf "  Hosts (%d): %s\n" "${#HOSTS[@]}" "${HOSTS[*]}"
         echo
+        read -rn 1 -p "Choose an option: " procopt
+        echo
+
         case $procopt in
-          1)
-            break
-          ;;
+          1) break ;;
           2)
-            DATE=$(date +%d-%m-%y)
-            {
-              sudo ssh -t "$HOST" "
-              echo \"----- Uptime -----\"
+            echo "[Sequential] Checking uptime/cores on ${#HOSTS[@]} host(s)"
+            run_sequential "
+              echo \"=== Uptime ===\"
               uptime
-              echo \"----- CPU Cores -----\"
+              echo \"=== CPU Cores ===\"
               nproc
-              "
-            } 2>&1 | tee -a "${HOST}_${DATE}.log"
-          ;;
-          3)
-            DATE=$(date +%d-%m-%y)
-          {
-            sudo ssh -t "$HOST" "
-            ps -eo user,pid,s | grep -wi d >/dev/null 2>&1 
-            if [ \$? -eq 0 ]; then
-              ps -eo user,pid,s | grep -wi d 
-            else
-              echo \"No D-State process\"
-            fi
             "
-          } 2>&1 | tee -a "${HOST}_${DATE}.log"
-        ;;
-        4)
-          exit 0
-        ;;
-        *) echo "Invalid Option"
-          ;;
+            ;;
+          3)
+            echo "[Sequential] Checking D-State processes on ${#HOSTS[@]} host(s)"
+            run_sequential "
+              if ps -eo user,pid,s | grep -wi d >/dev/null 2>&1; then
+                echo \"=== D-State Processes ===\"
+                ps -eo user,pid,s | grep -wi d
+              else
+                echo \"No D-State processes found.\"
+              fi
+            "
+            ;;
+          4) exit 0 ;;
+          *) echo "Invalid Option" ;;
         esac
-        printf "\n%30s\n" "Hit Any Key To Continue"
-        read -n 1
+        pause
       done
       continue
       ;;
+
+    # ── 4. EXIT ────────────────────────────────
     4)
       exit 0
-    ;;
+      ;;
+
+    # ── 5. FARM ────────────────────────────────
     5)
       if [ -z "$FARM" ]; then
-      echo
-      read -p "Enter FARM name: " FARM
-      while [ -z "$FARM" ]; do
-        read -p "FARM cannot be empty. Enter FARM name: " FARM
-      done
+        read -rp "Enter FARM name: " FARM
+        while [ -z "$FARM" ]; do
+          read -rp "FARM cannot be empty. Enter FARM name: " FARM
+        done
       fi
-      while [ -n "$FARM" ]
-      do
+
+      while true; do
         clear
         echo "---------------------------------------"
         printf "|         Farm MENU                   |\n"
         echo "---------------------------------------"
-        printf "| %-15s | %-9s |\n" "1. Main Menu" "2. Pending reason"
-        echo "---------------------------------------"
+        printf "| %-15s | %-17s |\n" "1. Main Menu"  "2. Pending reason"
         printf "| %-15s | %-17s |\n" "3. User Limit" "4. Exit"
         echo "---------------------------------------"
+        echo "  Farm: $FARM"
         echo
-        read -n 1 -p "Choose an option: " farmopt
+        read -rn 1 -p "Choose an option: " farmopt
         echo
 
-        case $farmopt in 
+        case $farmopt in
           1) break ;;
           2)
             DATE=$(date +%d-%m-%y)
             {
-              echo "sourcing the farm \"$FARM\""
+              echo "Sourcing farm: $FARM"
               srcfrm "$FARM"
-              read -p "what is the userid: " user
-              echo -e "\nRunning Jobs"
+              read -rp "User ID: " user
+              echo -e "\nRunning Jobs:"
               bjobs -u "$user"
-              read -p "want to check the pending reason yes/no?: " ans
-              while [ -z "$ans" ]
-              do
-                read -p "Please confirm yes/no: " ans
+              read -rp "Check pending reason? [yes/no]: " ans
+              while [ -z "$ans" ]; do
+                read -rp "Please confirm yes/no: " ans
               done
-              if [ "$ans" == "yes" ] ||  [ "$ans" == "y" ] || [ "$ans" == "Y" ] 
-              then
-                read -p  "what is the jobid: " jobid
+              if [[ "$ans" == "yes" || "$ans" == "y" || "$ans" == "Y" ]]; then
+                read -rp "Job ID: " jobid
                 bjobs -l "$jobid"
               fi
-            } 2>&1 |tee -a ${FARM}_${DATE}.log
+            } 2>&1 | tee -a "${FARM}_${DATE}.log"
             ;;
           3)
             DATE=$(date +%d-%m-%y)
             {
-              echo "sourcing the farm $FARM"
+              echo "Sourcing farm: $FARM"
               srcfrm "$FARM"
-              read -p "what is the userid: " user
-              echo -e "\nUser Limits: "
+              read -rp "User ID: " user
+              echo -e "\nUser Limits:"
               blimits -u "$user"
-            } 2>&1 |tee -a ${FARM}_${DATE}.log
+            } 2>&1 | tee -a "${FARM}_${DATE}.log"
             ;;
           4) exit 0 ;;
-          *) echo "Invalid Option"
-          ;;
+          *) echo "Invalid Option" ;;
         esac
-        printf "\n%30s\n" "Hit Any Key To Continue"
-        read -n 1
+        pause
       done
       continue
       ;;
+
+    # ── 6. LOGIN RESTRICTION ───────────────────
     6)
+      require_hosts || { pause; continue; }
+
       while true; do
         clear
         echo "------------------------------------------"
         printf "|  Login Restriction MENU                |\n"
         echo "------------------------------------------"
-        printf "| %-15s | %-9s |\n" "1. Main Menu" "2. Show Restrictions"
+        printf "| %-15s | %-20s |\n" "1. Main Menu"     "2. Show Restrictions"
+        printf "| %-15s | %-20s |\n" "3. Search User"   "4. Exit"
         echo "------------------------------------------"
-        printf "| %-15s | %-20s |\n" "3. Search User" "4. Exit"
-        echo "------------------------------------------"
-        read -n 1 -p "Choose an option: " loginopt
+        printf "  Hosts (%d): %s\n" "${#HOSTS[@]}" "${HOSTS[*]}"
+        echo
+        read -rn 1 -p "Choose an option: " loginopt
         echo
 
         case $loginopt in
           1) break ;;
           2)
-            DATE=$(date +%d-%m-%y)
-            {
-              sudo ssh -t "$HOST" "
-              echo \"Checking Login Restrictions (/etc/security/access.conf)\" 
+            echo "[Sequential] Checking login restrictions on ${#HOSTS[@]} host(s)"
+            run_sequential "
+              echo \"=== Login Restrictions (/etc/security/access.conf) ===\"
               tail -n 4 /etc/security/access.conf
-              "
-            } 2>&1 | tee -a "${HOST}_${DATE}.log"
+            "
             ;;
           3)
-            DATE=$(date +%d-%m-%y)
-            {
-              sudo ssh -t "$HOST" "
-               read -p \"Enter username to search: \" search
-              echo \"Searching for \$search in access.conf\"
-              grep -wi \$search /etc/security/access.conf
-              "
-            } 2>&1 | tee -a "${HOST}_${DATE}.log"
+            read -rp "Enter username to search: " search
+            while [ -z "$search" ]; do
+              read -rp "Username cannot be empty: " search
+            done
+            echo "[Sequential] Searching '$search' on ${#HOSTS[@]} host(s)"
+            run_sequential "
+              echo \"=== Searching for '$search' in access.conf ===\"
+              grep -wi '$search' /etc/security/access.conf || echo 'No match found.'
+            "
             ;;
           4) exit 0 ;;
-          *) echo "Invalid Option"
-          ;;
+          *) echo "Invalid Option" ;;
         esac
-        printf "\n%30s\n" "Hit Any Key To Continue"
-        read -n 1
+        pause
       done
       continue
       ;;
+
+    # ── 7. HEALTH CHECK ────────────────────────
     7)
+      require_hosts || { pause; continue; }
+
       while true; do
-      clear
-      echo "-----------------------------------------------"
-      printf "|          Health check MENU                  |\n"
-      echo "-----------------------------------------------"
-      printf "| %-20s | %-20s |\n" "1. Main Menu" "2. Health Check - LS"
-      echo "-----------------------------------------------"
-      printf "| %-20s | %-20s |\n" "3. Health Check - SS" "4. Exit"
-      echo "-----------------------------------------------"
-      read -n 1 -p "Choose an option: " healthopt
-      echo
-      case $healthopt in
-        1)
-          break ;;
-        2)
-          DATE=$(date +%d-%m-%y)
-          {
-            sudo ssh -t "$HOST" "
-            echo \"----Running Health Check on \"$HOST\"----\"
-            /etc/synopsys/local_health_check/bin/local_health_check.sh -v
+        clear
+        echo "-----------------------------------------------"
+        printf "|          Health check MENU                  |\n"
+        echo "-----------------------------------------------"
+        printf "| %-20s | %-20s |\n" "1. Main Menu"          "2. Health Check - LS"
+        printf "| %-20s | %-20s |\n" "3. Health Check - SS"  "4. Exit"
+        echo "-----------------------------------------------"
+        printf "  Hosts (%d): %s\n" "${#HOSTS[@]}" "${HOSTS[*]}"
+        echo
+        read -rn 1 -p "Choose an option: " healthopt
+        echo
+
+        case $healthopt in
+          1) break ;;
+          2)
+            echo "[Sequential] Running LS health check on ${#HOSTS[@]} host(s)"
+            run_sequential "
+              echo \"=== Health Check (LS) ===\"
+              /etc/synopsys/local_health_check/bin/local_health_check.sh -v
             "
-          } 2>&1 | tee -a "${HOST}_${DATE}.log"
-          ;;
-        3)
-          DATE=$(date +%d-%m-%y)
-          {
-            sudo ssh -t "$HOST" "
-            echo \"----Running Health Check on \"$HOST\"----\"
-            ckhealth.ksh -v 
+            ;;
+          3)
+            echo "[Sequential] Running SS health check on ${#HOSTS[@]} host(s)"
+            run_sequential "
+              echo \"=== Health Check (SS) ===\"
+              ckhealth.ksh -v
             "
-          } 2>&1 | tee -a "${HOST}_${DATE}.log"
-          ;;
-        4) exit 0 ;;
-        *) echo "Invalid Option"
-          ;;
+            ;;
+          4) exit 0 ;;
+          *) echo "Invalid Option" ;;
         esac
-        printf "\n%30s\n" "Hit Any Key To Continue"
-        read -n 1
+        pause
       done
       continue
       ;;
-    *) echo "Invalid Option"
-    ;;
+
+    *) echo "Invalid Option" ;;
   esac
-  printf "\n%30s\n" "Hit Any Key To Continue"
-  read -n 1
+  pause
 done
