@@ -34,7 +34,7 @@ A Bash-based interactive menu-driven tool for performing common sysadmin tasks a
 ## Usage
 
 ```bash
-./script.sh [OPTIONS]
+os [OPTIONS]
 ```
 
 ### Options
@@ -49,19 +49,19 @@ A Bash-based interactive menu-driven tool for performing common sysadmin tasks a
 
 ```bash
 # Single host
-./script.sh -m server01
+os -m server01
 
 # Multiple hosts (comma-separated)
-./script.sh -m server01,server02,server03
+os -m server01,server02,server03
 
 # Hosts from a file
-./script.sh -m /path/to/hostfile.txt
+os -m /path/to/hostfile.txt
 
 # LSF farm only
-./script.sh -f prod_farm
+os -f prod_farm
 
 # Combined
-./script.sh -m server01,server02 -f prod_farm
+os -m server01,server02 -f prod_farm
 ```
 
 ### Hostfile Format
