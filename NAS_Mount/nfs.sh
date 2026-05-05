@@ -8,7 +8,7 @@
 
 for host in `cat /var/host`
 do
-TOUT=`timeout 60s ssh  -o BatchMode=yes -o StrictHostKeyChecking=no -p 2022 $host date > /dev/null`
+timeout 60s ssh  -o BatchMode=yes -o StrictHostKeyChecking=no -p 2022 $host date > /dev/null
 if [ $? -eq 0 ]
         then
         Login="ssh -o BatchMode=yes -o StrictHostKeyChecking=no -p 2022"
@@ -22,7 +22,8 @@ if [ $? -eq 0 ]; then
 $SSH $host "echo; echo -e '\t\t\t==============='; echo -e '\t\t\t$host'; echo -e '\t\t\t==============='; echo"
 else
         echo
-        echo "Login Not Success"
+        echo "Login Not Success for $host"
+        continue
 fi
 echo
 echo "Present NFS shares: "
